@@ -21,7 +21,8 @@
     $ git clone https://github.com/RavokTHC/THC-Wifi-Tool.git
 `
 * Instale as Dependencias
-
+` 
+    
 * Aircrack-ng.....
 * Aireplay-ng.....
 * Airmon-ng.......
@@ -41,8 +42,7 @@
 * Unzip...........
 * Xterm...........
 `
-    
-`
+
 * Descompacte o Arquivo
 `
     $ unzip THC-Wifi-Tool-master.zip
