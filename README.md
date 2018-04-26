@@ -23,43 +23,41 @@
 * Instale as Dependencias
 ` 
     $ Aircrack-ng
-`` 
+
     $ Aireplay-ng
-`` 
+
     $ Airmon-ng
-`` 
+
     $ Airodump-ng.
-`` 
+
     $ Awk
-`` 
+
     $ Curl
-`` 
+
     $ Dhcpd
-`` 
+ 
     $ Hostapd
-`` 
+ 
     $ Iwconfig
-`   
-` 
+    
     $ Lighttpd
-`  ` 
+ 
     $ Macchanger
-`  ` 
+ 
     $ Mdk3
-`  ` 
+
     $ Nmap
-`  `  
+
     $ hp5-cgi
-`  ` 
+
     $ Pyrit
-`  `  
+
     $ Python
-`  `   
+
     $ Unzip
-`  
-`     
+    
     $ Xterm
-`  
+
 
 * Descompacte o Arquivo
 `
